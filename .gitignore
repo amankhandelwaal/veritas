@@ -1,0 +1,17 @@
+# Environment — never commit
+.env
+.env.local
+.env.*.local
+
+# Foundry artifacts
+contracts/cache/
+contracts/out/
+
+# Next.js
+frontend/.next/
+frontend/node_modules/
+frontend/out/
+
+# General
+.DS_Store
+*.log
