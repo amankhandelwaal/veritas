@@ -38,10 +38,10 @@ contract Veritas is ReentrancyGuard {
         mapping(address => VoteRecord) voteRecords;
     }
 
-    uint256 public constant FLAG_THRESHOLD = 5;
+    uint256 public constant FLAG_THRESHOLD = 1;
     uint256 public constant MODERATOR_DEPOSIT = 0.01 ether;
-    uint256 public constant COMMIT_DURATION = 1 days;
-    uint256 public constant REVEAL_DURATION = 1 days;
+    uint256 public constant COMMIT_DURATION = 5 minutes;
+    uint256 public constant REVEAL_DURATION = 5 minutes;
     uint256 private constant MINIMUM_QUORUM = 3;
 
     uint256 private _postCounter;

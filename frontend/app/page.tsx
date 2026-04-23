@@ -255,10 +255,10 @@ export default function Home() {
       <div className="relative mx-auto w-full max-w-6xl px-4 py-8 sm:px-6 lg:px-8">
         <div className="mb-6 flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-zinc-800/80 bg-zinc-900/65 p-4">
           <div>
-            <p className="text-xs font-semibold tracking-[0.16em] text-emerald-200 uppercase">Veritas Feed</p>
-            <h1 className="mt-1 text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
+            <h1 className="text-xl font-bold tracking-[0.16em] text-emerald-200 uppercase">Feed</h1>
+            {/* <h1 className="mt-1 text-2xl font-semibold tracking-tight text-zinc-50 sm:text-3xl">
               Events-only timeline with on-chain moderation
-            </h1>
+            </h1> */}
           </div>
 
           <div className="flex items-center gap-2">
