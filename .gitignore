@@ -16,3 +16,4 @@ frontend/out/
 .DS_Store
 *.log
 contracts/lib/
+PROJECT_CONTEXT.md
