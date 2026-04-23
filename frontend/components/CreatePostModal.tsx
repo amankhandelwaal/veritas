@@ -1,36 +1,57 @@
 "use client";
 
-import { FormEvent, useMemo, useState } from "react";
+import { FormEvent, useMemo, useRef, useState } from "react";
+import { useQueryClient } from "@tanstack/react-query";
+import { BaseError } from "viem";
 import { toast } from "sonner";
+import { usePublicClient, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
 
-type PreparePostResult = {
-  cid: string;
-  tag: string;
-  text: string;
-  toxicityScore: number;
-};
-
-type CreatePostModalProps = {
-  onPostPrepared?: (result: PreparePostResult) => void;
-};
+import { getVeritasAddress, VERITAS_ABI } from "@/lib/contract";
 
 const TAG_OPTIONS = ["General", "Governance", "Research", "Security", "Announcements"];
 
-export function CreatePostModal({ onPostPrepared }: CreatePostModalProps) {
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof BaseError) {
+    return error.shortMessage || error.message || fallback;
+  }
+  if (error instanceof Error) {
+    return error.message || fallback;
+  }
+  return fallback;
+}
+
+export function CreatePostModal() {
+  const publicClient = usePublicClient();
+  const queryClient = useQueryClient();
   const [isOpen, setIsOpen] = useState(false);
   const [content, setContent] = useState("");
   const [tag, setTag] = useState(TAG_OPTIONS[0]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [pendingHash, setPendingHash] = useState<`0x${string}` | undefined>();
+  const submitLockRef = useRef(false);
+
+  const { writeContractAsync, isPending: isAwaitingWalletSignature } = useWriteContract();
+  const { isLoading: isConfirming } = useWaitForTransactionReceipt({
+    hash: pendingHash,
+    query: {
+      enabled: Boolean(pendingHash),
+    },
+  });
 
   const remainingChars = useMemo(() => 600 - content.length, [content.length]);
+  const isBusy = isSubmitting || isAwaitingWalletSignature || isConfirming;
 
   const closeModal = () => {
-    if (isSubmitting) return;
+    if (isBusy) return;
     setIsOpen(false);
   };
 
   const submitPost = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
+    if (submitLockRef.current) {
+      toast.error("Post submission already in progress.");
+      return;
+    }
 
     const trimmed = content.trim();
     if (!trimmed) {
@@ -43,6 +64,7 @@ export function CreatePostModal({ onPostPrepared }: CreatePostModalProps) {
       return;
     }
 
+    submitLockRef.current = true;
     setIsSubmitting(true);
 
     try {
@@ -83,21 +105,32 @@ export function CreatePostModal({ onPostPrepared }: CreatePostModalProps) {
         throw new Error(pinataData.error ?? "Pinata upload failed.");
       }
 
-      onPostPrepared?.({
-        cid: pinataData.cid,
-        tag,
-        text: trimmed,
-        toxicityScore: perspectiveData.toxicityScore ?? 0,
+      const hash = await writeContractAsync({
+        address: getVeritasAddress(),
+        abi: VERITAS_ABI,
+        functionName: "createPost",
+        args: [pinataData.cid, tag],
       });
 
-      toast.success("Post prepared and uploaded to IPFS. Ready for on-chain publish in Phase 4.");
+      toast.success("Transaction submitted. Waiting for confirmation...");
+      setPendingHash(hash);
+      if (!publicClient) {
+        throw new Error("Public client unavailable. Please reconnect wallet and retry.");
+      }
+
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      toast.success("Post published on-chain.");
       setContent("");
       setTag(TAG_OPTIONS[0]);
       setIsOpen(false);
+      setPendingHash(undefined);
+      void queryClient.invalidateQueries({ queryKey: ["veritas-feed"] });
     } catch (error) {
-      const message = error instanceof Error ? error.message : "Unexpected error while preparing post.";
-      toast.error(message);
+      setPendingHash(undefined);
+      toast.error(getErrorMessage(error, "Unexpected error while creating post."));
     } finally {
+      submitLockRef.current = false;
       setIsSubmitting(false);
     }
   };
@@ -124,15 +157,16 @@ export function CreatePostModal({ onPostPrepared }: CreatePostModalProps) {
           <div className="relative z-10 w-full max-w-xl rounded-2xl border border-zinc-800 bg-zinc-900/95 p-5 shadow-[0_24px_90px_rgba(0,0,0,0.6)] sm:p-6">
             <div className="mb-5 flex items-start justify-between gap-4">
               <div>
-                <h2 className="text-xl font-semibold text-zinc-100">Prepare a post</h2>
+                <h2 className="text-xl font-semibold text-zinc-100">Create a post</h2>
                 <p className="mt-1 text-sm text-zinc-400">
-                  Content is screened off-chain, then pinned to IPFS before any on-chain action.
+                  Content is screened off-chain, pinned to IPFS, then published on-chain.
                 </p>
               </div>
               <button
                 type="button"
                 onClick={closeModal}
-                className="rounded-md border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-zinc-800"
+                disabled={isBusy}
+                className="rounded-md border border-zinc-700 px-2.5 py-1 text-xs font-medium text-zinc-300 transition hover:bg-zinc-800 disabled:cursor-not-allowed disabled:opacity-70"
               >
                 Close
               </button>
@@ -148,7 +182,7 @@ export function CreatePostModal({ onPostPrepared }: CreatePostModalProps) {
                   onChange={(event) => setContent(event.target.value)}
                   placeholder="Share a thought worth defending..."
                   className="w-full rounded-xl border border-zinc-700/90 bg-zinc-950/90 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-emerald-400/60"
-                  disabled={isSubmitting}
+                  disabled={isBusy}
                 />
                 <span className={`text-xs ${remainingChars < 80 ? "text-amber-300" : "text-zinc-500"}`}>
                   {remainingChars} characters remaining
@@ -160,7 +194,7 @@ export function CreatePostModal({ onPostPrepared }: CreatePostModalProps) {
                 <select
                   value={tag}
                   onChange={(event) => setTag(event.target.value)}
-                  disabled={isSubmitting}
+                  disabled={isBusy}
                   className="w-full rounded-xl border border-zinc-700/90 bg-zinc-950/90 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-emerald-400/60"
                 >
                   {TAG_OPTIONS.map((option) => (
@@ -173,10 +207,10 @@ export function CreatePostModal({ onPostPrepared }: CreatePostModalProps) {
 
               <button
                 type="submit"
-                disabled={isSubmitting}
+                disabled={isBusy}
                 className="inline-flex w-full items-center justify-center gap-2 rounded-xl bg-emerald-400 px-4 py-2.5 text-sm font-semibold text-zinc-950 transition hover:bg-emerald-300 disabled:cursor-not-allowed disabled:bg-emerald-300/70"
               >
-                {isSubmitting ? (
+                {isSubmitting || isAwaitingWalletSignature || isConfirming ? (
                   <>
                     <svg
                       aria-hidden="true"
@@ -188,10 +222,14 @@ export function CreatePostModal({ onPostPrepared }: CreatePostModalProps) {
                       <circle cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="3" className="opacity-30" />
                       <path d="M22 12a10 10 0 0 1-10 10" stroke="currentColor" strokeWidth="3" />
                     </svg>
-                    Preparing Post...
+                    {isSubmitting
+                      ? "Preparing Post..."
+                      : isAwaitingWalletSignature
+                        ? "Awaiting Wallet Signature..."
+                        : "Waiting for Block Confirmation..."}
                   </>
                 ) : (
-                  "Screen & Upload to IPFS"
+                  "Publish Post"
                 )}
               </button>
             </form>

@@ -1,26 +1,22 @@
-type PostState = "ACTIVE" | "UNDER_REVIEW" | "BANNED";
+"use client";
+
+import { useMemo, useState } from "react";
+import { BaseError } from "viem";
+import { toast } from "sonner";
+import { useAccount, usePublicClient, useWaitForTransactionReceipt, useWriteContract } from "wagmi";
+
+import { getVeritasAddress, normalizePostState, type PostState, VERITAS_ABI } from "@/lib/contract";
 
 type PostCardProps = {
   postId: number;
   author: string;
   cid: string;
   tag: string;
+  content?: string;
   timestamp: number;
   state: PostState | string | number;
+  onFlagged?: () => void;
 };
-
-function normalizeState(input: PostCardProps["state"]): PostState {
-  if (typeof input === "number") {
-    if (input === 1) return "UNDER_REVIEW";
-    if (input === 2) return "BANNED";
-    return "ACTIVE";
-  }
-
-  const normalized = String(input).toUpperCase();
-  if (normalized === "UNDER_REVIEW") return "UNDER_REVIEW";
-  if (normalized === "BANNED") return "BANNED";
-  return "ACTIVE";
-}
 
 function formatTimestamp(timestamp: number): string {
   const date = new Date(timestamp < 1_000_000_000_000 ? timestamp * 1000 : timestamp);
@@ -40,8 +36,29 @@ function truncateCid(cid: string): string {
   return `${cid.slice(0, 10)}...${cid.slice(-8)}`;
 }
 
-export function PostCard({ postId, author, cid, tag, timestamp, state }: PostCardProps) {
-  const normalizedState = normalizeState(state);
+function getErrorMessage(error: unknown, fallback: string): string {
+  if (error instanceof BaseError) {
+    return error.shortMessage || error.message || fallback;
+  }
+  if (error instanceof Error) {
+    return error.message || fallback;
+  }
+  return fallback;
+}
+
+export function PostCard({ postId, author, cid, tag, content, timestamp, state, onFlagged }: PostCardProps) {
+  const { address } = useAccount();
+  const publicClient = usePublicClient();
+  const [pendingHash, setPendingHash] = useState<`0x${string}` | undefined>();
+  const normalizedState = normalizePostState(state);
+
+  const { writeContractAsync, isPending: isAwaitingWalletSignature } = useWriteContract();
+  const { isLoading: isConfirming } = useWaitForTransactionReceipt({
+    hash: pendingHash,
+    query: {
+      enabled: Boolean(pendingHash),
+    },
+  });
 
   const cardStateStyles =
     normalizedState === "ACTIVE"
@@ -51,11 +68,7 @@ export function PostCard({ postId, author, cid, tag, timestamp, state }: PostCar
         : "border-rose-500/40 bg-zinc-900/60 saturate-0 opacity-80";
 
   const contentStateStyles =
-    normalizedState === "ACTIVE"
-      ? ""
-      : normalizedState === "UNDER_REVIEW"
-        ? "blur-[1px]"
-        : "blur-sm";
+    normalizedState === "ACTIVE" ? "" : normalizedState === "UNDER_REVIEW" ? "blur-[1px]" : "blur-sm";
 
   const stateLabelStyles =
     normalizedState === "ACTIVE"
@@ -63,6 +76,46 @@ export function PostCard({ postId, author, cid, tag, timestamp, state }: PostCar
       : normalizedState === "UNDER_REVIEW"
         ? "border-amber-400/25 bg-amber-400/10 text-amber-200"
         : "border-rose-400/25 bg-rose-400/10 text-rose-200";
+
+  const isOwnPost = Boolean(
+    address && author && address.toLowerCase() === author.toLowerCase(),
+  );
+  const canFlag = normalizedState === "ACTIVE" && !isOwnPost;
+  const isFlagging = isAwaitingWalletSignature || isConfirming;
+  const flagButtonText = useMemo(() => {
+    if (isAwaitingWalletSignature) return "Awaiting Signature...";
+    if (isConfirming) return "Confirming...";
+    if (isOwnPost) return "Cannot Flag Own Post";
+    return "Flag Post";
+  }, [isAwaitingWalletSignature, isConfirming, isOwnPost]);
+
+  const handleFlagPost = async () => {
+    if (!canFlag || isFlagging) return;
+
+    try {
+      const hash = await writeContractAsync({
+        address: getVeritasAddress(),
+        abi: VERITAS_ABI,
+        functionName: "flagPost",
+        args: [BigInt(postId)],
+      });
+
+      toast.success("Flag transaction submitted.");
+      setPendingHash(hash);
+      if (!publicClient) {
+        throw new Error("Public client unavailable. Please reconnect wallet and retry.");
+      }
+
+      await publicClient.waitForTransactionReceipt({ hash });
+
+      toast.success(`Post #${postId} flagged for moderation.`);
+      setPendingHash(undefined);
+      onFlagged?.();
+    } catch (error) {
+      setPendingHash(undefined);
+      toast.error(getErrorMessage(error, "Could not submit flag transaction."));
+    }
+  };
 
   return (
     <article className={`rounded-2xl border p-5 shadow-[0_12px_42px_rgba(0,0,0,0.24)] ${cardStateStyles}`}>
@@ -80,10 +133,22 @@ export function PostCard({ postId, author, cid, tag, timestamp, state }: PostCar
             <p className="text-sm font-semibold tracking-wide text-zinc-100">Post #{postId}</p>
             <p className="text-xs text-zinc-400">{formatTimestamp(timestamp)}</p>
           </div>
-          <span className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.14em] ${stateLabelStyles}`}>
+          <span
+            className={`rounded-full border px-2.5 py-1 text-[10px] font-semibold tracking-[0.14em] ${stateLabelStyles}`}
+          >
             {normalizedState.replace("_", " ")}
           </span>
         </header>
+
+        {content ? (
+          <p className="rounded-xl border border-zinc-800/80 bg-zinc-950/80 px-3 py-3 text-sm leading-6 text-zinc-100">
+            {content}
+          </p>
+        ) : (
+          <p className="rounded-xl border border-zinc-800/80 bg-zinc-950/80 px-3 py-3 text-sm text-zinc-400 italic">
+            Content unavailable from IPFS gateway.
+          </p>
+        )}
 
         <div className="space-y-2">
           <p className="text-xs uppercase tracking-[0.12em] text-zinc-500">Author</p>
@@ -97,6 +162,20 @@ export function PostCard({ postId, author, cid, tag, timestamp, state }: PostCar
           <span className="rounded-md border border-zinc-700/80 bg-zinc-800/80 px-2.5 py-1 text-xs font-medium text-zinc-300">
             CID {truncateCid(cid)}
           </span>
+        </div>
+
+        <div className="pt-1">
+          <button
+            type="button"
+            disabled={!canFlag || isFlagging}
+            onClick={handleFlagPost}
+            className="inline-flex items-center justify-center rounded-lg border border-rose-400/35 bg-rose-500/10 px-3 py-1.5 text-xs font-semibold tracking-wide text-rose-200 transition hover:bg-rose-500/20 disabled:cursor-not-allowed disabled:opacity-50"
+          >
+            {flagButtonText}
+          </button>
+          {isOwnPost ? (
+            <p className="mt-2 text-xs text-zinc-500">Authors cannot flag their own posts.</p>
+          ) : null}
         </div>
       </div>
     </article>

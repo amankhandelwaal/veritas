@@ -1,23 +1,23 @@
 import { NextRequest, NextResponse } from "next/server";
 
 const TOXICITY_THRESHOLD = 0.8;
+const HF_MODEL_URL = "https://router.huggingface.co/hf-inference/models/unitary/toxic-bert";
 
-type PerspectiveApiResponse = {
-  attributeScores?: {
-    TOXICITY?: {
-      summaryScore?: {
-        value?: number;
-      };
-    };
-  };
+type HfLabel = {
+  label: string;
+  score: number;
+};
+
+type HfInferenceError = {
+  error?: string;
 };
 
 export async function POST(request: NextRequest) {
-  const perspectiveApiKey = process.env.PERSPECTIVE_API_KEY;
+  const huggingFaceToken = process.env.HUGGINGFACE_TOKEN;
 
-  if (!perspectiveApiKey) {
+  if (!huggingFaceToken) {
     return NextResponse.json(
-      { error: "PERSPECTIVE_API_KEY is not configured." },
+      { error: "HUGGINGFACE_TOKEN is not configured." },
       { status: 500 },
     );
   }
@@ -48,48 +48,83 @@ export async function POST(request: NextRequest) {
     );
   }
 
-  const endpoint = `https://commentanalyzer.googleapis.com/v1alpha1/comments:analyze?key=${perspectiveApiKey}`;
-
   try {
-    const response = await fetch(endpoint, {
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), 30_000);
+
+    const response = await fetch(HF_MODEL_URL, {
       method: "POST",
       headers: {
+        Authorization: `Bearer ${huggingFaceToken}`,
+        Accept: "application/json",
         "Content-Type": "application/json",
       },
       body: JSON.stringify({
-        comment: { text },
-        languages: ["en"],
-        doNotStore: true,
-        requestedAttributes: {
-          TOXICITY: {},
-        },
+        inputs: text,
+        options: { wait_for_model: true },
       }),
       cache: "no-store",
+      signal: controller.signal,
     });
+    clearTimeout(timeout);
 
-    if (!response.ok) {
-      const detail = await response.text();
+    const raw = await response.text();
+    const contentType = response.headers.get("content-type")?.toLowerCase() ?? "";
+    const isJson = contentType.includes("application/json");
+
+    if (!isJson) {
+      const snippet = raw.slice(0, 240).replace(/\s+/g, " ").trim();
       return NextResponse.json(
         {
-          error: "Perspective API request failed.",
-          detail: detail.slice(0, 240),
+          error: `Hugging Face returned a non-JSON response (status ${response.status}). ${snippet}`,
+          status: response.status,
+          detail: raw.slice(0, 240),
         },
-        { status: 502 },
+        { status: 503 },
       );
     }
 
-    const result = (await response.json()) as PerspectiveApiResponse;
-    const toxicityScore =
-      result.attributeScores?.TOXICITY?.summaryScore?.value ?? 0;
+    let result: HfLabel[][] | HfInferenceError = {};
+    try {
+      result = (raw ? JSON.parse(raw) : {}) as HfLabel[][] | HfInferenceError;
+    } catch {
+      const snippet = raw.slice(0, 240).replace(/\s+/g, " ").trim();
+      return NextResponse.json(
+        {
+          error: `Hugging Face returned invalid JSON (status ${response.status}). ${snippet}`,
+          status: response.status,
+          detail: raw.slice(0, 240),
+        },
+        { status: 503 },
+      );
+    }
+
+    if (!response.ok || ("error" in result && result.error)) {
+      const detail = "error" in result ? result.error : "Hugging Face moderation request failed.";
+      return NextResponse.json(
+        { error: detail, status: response.status },
+        { status: 503 },
+      );
+    }
+
+    const labels = Array.isArray(result) && Array.isArray(result[0]) ? result[0] : [];
+    const toxicLabel = labels.find((label) => label.label.toLowerCase() === "toxic");
+    const toxicityScore = toxicLabel?.score ?? 0;
+    const isToxic = toxicityScore >= TOXICITY_THRESHOLD;
 
     return NextResponse.json({
       toxicityScore,
       threshold: TOXICITY_THRESHOLD,
-      isToxic: toxicityScore >= TOXICITY_THRESHOLD,
+      isToxic,
     });
-  } catch {
+  } catch (error) {
+    const message =
+      error instanceof Error
+        ? error.message
+        : "Could not reach Hugging Face Inference API.";
+
     return NextResponse.json(
-      { error: "Could not reach Perspective API." },
+      { error: `Could not reach Hugging Face Inference API: ${message}` },
       { status: 502 },
     );
   }
