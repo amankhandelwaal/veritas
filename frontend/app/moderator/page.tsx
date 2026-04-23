@@ -20,7 +20,7 @@ const CHUNK_BLOCK_DELTA = BigInt(9);
 const LOOKBACK_BLOCKS = BigInt(200);
 const POST_STATE_UNDER_REVIEW = 1;
 const STORAGE_PREFIX = "veritas:tribunal";
-const EXPECTED_FLAG_THRESHOLD = BigInt(5);
+const EXPECTED_FLAG_THRESHOLD = BigInt(1);
 const FALLBACK_MODERATOR_DEPOSIT_WEI = parseEther("0.01");
 
 type PostCreatedLogArgs = {
@@ -155,16 +155,20 @@ function getCasePhase(item: QueueItem, now: number): CasePhase {
   return "ready-finalization";
 }
 
-function getHoursLeft(deadline: number, now: number) {
+function getMinutesLeft(deadline: number, now: number) {
   const secondsLeft = Math.max(deadline - now, 0);
-  return (secondsLeft / 3600).toFixed(secondsLeft >= 3600 ? 1 : 2);
+  if (secondsLeft >= 60) {
+    return `${Math.ceil(secondsLeft / 60)} min left`;
+  }
+
+  return `${secondsLeft}s left`;
 }
 
 function getPhaseLabel(item: QueueItem, now: number) {
   const phase = getCasePhase(item, now);
   if (phase === "awaiting-first-vote") return "Awaiting First Vote";
-  if (phase === "commit") return `Commit Phase - ${getHoursLeft(item.commitDeadline, now)} hours left`;
-  if (phase === "reveal") return `Reveal Phase - ${getHoursLeft(item.revealDeadline, now)} hours left`;
+  if (phase === "commit") return `Commit Phase - ${getMinutesLeft(item.commitDeadline, now)}`;
+  if (phase === "reveal") return `Reveal Phase - ${getMinutesLeft(item.revealDeadline, now)}`;
   return "Ready for Finalization";
 }
 
@@ -391,7 +395,7 @@ export default function ModeratorPage() {
   const handleRegisterModerator = async () => {
     if (!publicClient || txBusy) return;
     if (!isPhase6Contract) {
-      toast.error("The configured contract is not the Phase 6 tribunal deployment.");
+      toast.error("The configured contract does not match the current tribunal deployment.");
       return;
     }
 
@@ -589,7 +593,7 @@ export default function ModeratorPage() {
             </p>
             {!isPhase6Contract ? (
               <p className="mt-3 rounded-xl border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
-                The configured Sepolia contract does not match the Phase 6 tribunal ABI. Redeploy `Veritas.sol` and
+                The configured Sepolia contract does not match the current tribunal ABI. Redeploy `Veritas.sol` and
                 update `NEXT_PUBLIC_CONTRACT_ADDRESS` before registering.
                 {hasContractConfigError ? " The deposit read failed, so registration is disabled." : ""}
               </p>

@@ -50,12 +50,12 @@ contract VeritasTest is Test {
         veritas.createPost("", TEST_TAG);
     }
 
-    function test_FlagPost_FifthFlagTriggersUnderReviewWithoutTimers() public {
+    function test_FlagPost_FirstFlagTriggersUnderReviewWithoutTimers() public {
         uint256 postId = _putPostUnderReview();
 
         Veritas.Post memory post = veritas.getPost(postId);
         assertEq(uint256(post.state), uint256(Veritas.PostState.UNDER_REVIEW));
-        assertEq(post.flagCount, 5);
+        assertEq(post.flagCount, 1);
 
         (uint256 commitDeadline, uint256 revealDeadline, , , uint256 voterCount, , ) =
             veritas.getTribunalCase(postId);
@@ -97,8 +97,8 @@ contract VeritasTest is Test {
 
         (uint256 commitDeadline, uint256 revealDeadline, , , uint256 voterCount, , ) =
             veritas.getTribunalCase(postId);
-        assertEq(commitDeadline, start + 1 days);
-        assertEq(revealDeadline, start + 2 days);
+        assertEq(commitDeadline, start + 5 minutes);
+        assertEq(revealDeadline, start + 10 minutes);
         assertEq(voterCount, 1);
         assertEq(veritas.activeCases(mod1), 1);
     }
@@ -122,7 +122,7 @@ contract VeritasTest is Test {
         vm.prank(mod1);
         veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-1", mod1));
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(block.timestamp + 5 minutes + 1);
         vm.prank(mod1);
         veritas.revealVote(postId, true, "secret-1");
 
@@ -138,7 +138,7 @@ contract VeritasTest is Test {
         vm.prank(mod1);
         veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-1", mod1));
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(block.timestamp + 5 minutes + 1);
         vm.prank(mod1);
         vm.expectRevert("Reveal does not match commitment");
         veritas.revealVote(postId, true, "wrong-secret");
@@ -161,7 +161,7 @@ contract VeritasTest is Test {
         vm.prank(mod3);
         veritas.commitVote{value: 2 ether}(postId, _commitment(false, "secret-3", mod3));
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(block.timestamp + 5 minutes + 1);
         vm.prank(mod1);
         veritas.revealVote(postId, true, "secret-1");
         vm.prank(mod2);
@@ -169,7 +169,7 @@ contract VeritasTest is Test {
         vm.prank(mod3);
         veritas.revealVote(postId, false, "secret-3");
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(block.timestamp + 5 minutes + 1);
         veritas.finalizeCase(postId);
 
         Veritas.Post memory post = veritas.getPost(postId);
@@ -196,7 +196,7 @@ contract VeritasTest is Test {
         vm.prank(mod2);
         veritas.commitVote{value: 2 ether}(postId, _commitment(false, "secret-2", mod2));
 
-        vm.warp(block.timestamp + 2 days + 1);
+        vm.warp(block.timestamp + 10 minutes + 1);
         veritas.finalizeCase(postId);
 
         assertEq(mod1.balance, mod1Start);
@@ -233,7 +233,7 @@ contract VeritasTest is Test {
         vm.prank(mod3);
         veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-3", mod3));
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(block.timestamp + 5 minutes + 1);
         vm.prank(mod1);
         veritas.revealVote(postId, false, "secret-1");
         vm.prank(mod2);
@@ -241,7 +241,7 @@ contract VeritasTest is Test {
         vm.prank(mod3);
         veritas.revealVote(postId, true, "secret-3");
 
-        vm.warp(block.timestamp + 1 days + 1);
+        vm.warp(block.timestamp + 5 minutes + 1);
         veritas.finalizeCase(postId);
 
         vm.prank(frank);
@@ -260,14 +260,6 @@ contract VeritasTest is Test {
         uint256 postId = veritas.createPost(TEST_CID, TEST_TAG);
 
         vm.prank(bob);
-        veritas.flagPost(postId);
-        vm.prank(carol);
-        veritas.flagPost(postId);
-        vm.prank(dave);
-        veritas.flagPost(postId);
-        vm.prank(eve);
-        veritas.flagPost(postId);
-        vm.prank(frank);
         veritas.flagPost(postId);
 
         return postId;

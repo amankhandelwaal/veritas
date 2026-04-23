@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useRef } from "react";
+import Link from "next/link";
 import { useQuery } from "@tanstack/react-query";
 import { parseAbiItem } from "viem";
 import { toast } from "sonner";
@@ -241,6 +242,14 @@ export default function Home() {
             A decentralized, censorship-resistant social feed powered by Ethereum and IPFS. Connect your wallet to
             start posting, reading, and moderating on-chain.
           </p>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <Link
+              href="/moderator"
+              className="inline-flex items-center justify-center rounded-xl border border-emerald-400/35 bg-emerald-400/15 px-5 py-3 text-sm font-semibold text-emerald-100 transition hover:border-emerald-300/50 hover:bg-emerald-400/25"
+            >
+              Open Moderator Dashboard
+            </Link>
+          </div>
           <div className="mt-10 animate-pulse rounded-xl border border-zinc-800 bg-zinc-900/50 px-6 py-4 text-sm text-zinc-300">
             Click <strong className="text-white">Connect Wallet</strong> in the header to enter the dApp.
           </div>
@@ -261,7 +270,13 @@ export default function Home() {
             </h1> */}
           </div>
 
-          <div className="flex items-center gap-2">
+          <div className="flex flex-wrap items-center gap-2">
+            <Link
+              href="/moderator"
+              className="inline-flex items-center justify-center rounded-xl border border-zinc-700/90 bg-zinc-800/80 px-3 py-2 text-sm font-medium text-zinc-200 transition hover:bg-zinc-700/80"
+            >
+              Moderator Dashboard
+            </Link>
             <button
               type="button"
               onClick={() => void refetch()}
