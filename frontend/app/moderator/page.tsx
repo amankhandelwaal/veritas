@@ -20,6 +20,8 @@ const CHUNK_BLOCK_DELTA = BigInt(9);
 const LOOKBACK_BLOCKS = BigInt(200);
 const POST_STATE_UNDER_REVIEW = 1;
 const STORAGE_PREFIX = "veritas:tribunal";
+const EXPECTED_FLAG_THRESHOLD = BigInt(5);
+const FALLBACK_MODERATOR_DEPOSIT_WEI = parseEther("0.01");
 
 type PostCreatedLogArgs = {
   postId?: bigint;
@@ -177,6 +179,7 @@ export default function ModeratorPage() {
   const [txLabel, setTxLabel] = useState("");
   const [stakeInputs, setStakeInputs] = useState<Record<number, string>>({});
   const [commitChoices, setCommitChoices] = useState<Record<number, "approve" | "ban">>({});
+  const [manualRevealChoices, setManualRevealChoices] = useState<Record<number, "approve" | "ban">>({});
   const [manualSecrets, setManualSecrets] = useState<Record<number, string>>({});
   const [storedReveals, setStoredReveals] = useState<Record<number, StoredReveal | null>>({});
 
@@ -201,10 +204,16 @@ export default function ModeratorPage() {
     args: [address ?? zeroAddress],
     query: { enabled: readEnabled },
   });
-  const { data: moderatorDepositRaw = BigInt(0) } = useReadContract({
+  const { data: moderatorDepositRaw, error: moderatorDepositError } = useReadContract({
     address: contractAddress,
     abi: VERITAS_ABI,
     functionName: "MODERATOR_DEPOSIT",
+    query: { enabled: true },
+  });
+  const { data: flagThresholdRaw, error: flagThresholdError } = useReadContract({
+    address: contractAddress,
+    abi: VERITAS_ABI,
+    functionName: "FLAG_THRESHOLD",
     query: { enabled: true },
   });
   const { data: moderatorStakeRaw = BigInt(0) } = useReadContract({
@@ -359,8 +368,17 @@ export default function ModeratorPage() {
 
   const txBusy = isAwaitingSignature || isConfirming;
   const activeCaseCount = Number(activeCasesRaw);
-  const moderatorDeposit = formatEther(moderatorDepositRaw);
+  const registrationDepositWei =
+    typeof moderatorDepositRaw === "bigint" && moderatorDepositRaw > BigInt(0)
+      ? moderatorDepositRaw
+      : FALLBACK_MODERATOR_DEPOSIT_WEI;
+  const moderatorDeposit = formatEther(registrationDepositWei);
   const moderatorStake = formatEther(moderatorStakeRaw);
+  const isPhase6Contract =
+    typeof moderatorDepositRaw === "bigint" &&
+    moderatorDepositRaw > BigInt(0) &&
+    flagThresholdRaw === EXPECTED_FLAG_THRESHOLD;
+  const hasContractConfigError = Boolean(moderatorDepositError || flagThresholdError);
 
   const syncLocalReveal = (postId: number) => {
     if (!address) return;
@@ -372,6 +390,10 @@ export default function ModeratorPage() {
 
   const handleRegisterModerator = async () => {
     if (!publicClient || txBusy) return;
+    if (!isPhase6Contract) {
+      toast.error("The configured contract is not the Phase 6 tribunal deployment.");
+      return;
+    }
 
     try {
       setTxLabel("Depositing into moderator registry...");
@@ -379,7 +401,8 @@ export default function ModeratorPage() {
         address: contractAddress,
         abi: VERITAS_ABI,
         functionName: "registerModerator",
-        value: moderatorDepositRaw,
+        value: registrationDepositWei,
+        gas: BigInt(150_000),
       });
 
       setPendingHash(hash);
@@ -467,7 +490,7 @@ export default function ModeratorPage() {
     }
   };
 
-  const handleReveal = async (postId: number, fallbackSecret?: string) => {
+  const handleReveal = async (postId: number, fallbackSecret?: string, fallbackVote?: "approve" | "ban") => {
     if (!address || !publicClient || txBusy) return;
 
     const stored = storedReveals[postId];
@@ -477,7 +500,7 @@ export default function ModeratorPage() {
       return;
     }
 
-    const vote = stored?.vote ?? false;
+    const vote = stored?.vote ?? fallbackVote === "approve";
 
     try {
       setTxLabel(`Revealing vote for post #${postId}...`);
@@ -564,10 +587,17 @@ export default function ModeratorPage() {
               Becoming a moderator requires a one-time {moderatorDeposit} ETH deposit. That deposit stays locked until
               you resign, and resignation is blocked while you still have unresolved active cases.
             </p>
+            {!isPhase6Contract ? (
+              <p className="mt-3 rounded-xl border border-amber-400/25 bg-amber-500/10 px-3 py-2 text-sm text-amber-100">
+                The configured Sepolia contract does not match the Phase 6 tribunal ABI. Redeploy `Veritas.sol` and
+                update `NEXT_PUBLIC_CONTRACT_ADDRESS` before registering.
+                {hasContractConfigError ? " The deposit read failed, so registration is disabled." : ""}
+              </p>
+            ) : null}
             <button
               type="button"
               onClick={() => void handleRegisterModerator()}
-              disabled={txBusy || isModeratorLoading}
+              disabled={txBusy || isModeratorLoading || !isPhase6Contract}
               className="mt-5 inline-flex items-center justify-center rounded-xl border border-emerald-400/35 bg-emerald-400/15 px-4 py-2.5 text-sm font-semibold text-emerald-100 transition hover:border-emerald-300/50 hover:bg-emerald-400/25 disabled:cursor-not-allowed disabled:opacity-60"
             >
               Deposit {moderatorDeposit} ETH To Register
@@ -636,6 +666,7 @@ export default function ModeratorPage() {
                   const phase = getCasePhase(item, dashboard.currentTimestamp);
                   const phaseLabel = getPhaseLabel(item, dashboard.currentTimestamp);
                   const manualSecret = manualSecrets[item.postId] ?? "";
+                  const manualRevealChoice = manualRevealChoices[item.postId] ?? "approve";
 
                   return (
                     <article
@@ -740,27 +771,48 @@ export default function ModeratorPage() {
                                 Stored reveal found for this wallet. Vote: {storedReveal.vote ? "Approve" : "Ban"}.
                               </div>
                             ) : (
-                              <label className="block space-y-2">
-                                <span className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-400">
-                                  Manual Secret
-                                </span>
-                                <input
-                                  value={manualSecret}
-                                  onChange={(event) =>
-                                    setManualSecrets((current) => ({
-                                      ...current,
-                                      [item.postId]: event.target.value,
-                                    }))
-                                  }
-                                  placeholder="Paste the secret you saved earlier"
-                                  className="w-full rounded-xl border border-zinc-700/80 bg-zinc-950/80 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-emerald-400/60"
-                                  disabled={txBusy}
-                                />
-                              </label>
+                              <div className="grid gap-3 sm:grid-cols-2">
+                                <label className="space-y-2">
+                                  <span className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-400">
+                                    Original Vote
+                                  </span>
+                                  <select
+                                    value={manualRevealChoice}
+                                    onChange={(event) =>
+                                      setManualRevealChoices((current) => ({
+                                        ...current,
+                                        [item.postId]: event.target.value as "approve" | "ban",
+                                      }))
+                                    }
+                                    className="w-full rounded-xl border border-zinc-700/80 bg-zinc-950/80 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-emerald-400/60"
+                                    disabled={txBusy}
+                                  >
+                                    <option value="approve">Approve</option>
+                                    <option value="ban">Ban</option>
+                                  </select>
+                                </label>
+                                <label className="space-y-2">
+                                  <span className="text-xs font-medium uppercase tracking-[0.12em] text-zinc-400">
+                                    Manual Secret
+                                  </span>
+                                  <input
+                                    value={manualSecret}
+                                    onChange={(event) =>
+                                      setManualSecrets((current) => ({
+                                        ...current,
+                                        [item.postId]: event.target.value,
+                                      }))
+                                    }
+                                    placeholder="Paste the secret you saved earlier"
+                                    className="w-full rounded-xl border border-zinc-700/80 bg-zinc-950/80 px-3 py-2.5 text-sm text-zinc-100 outline-none transition focus:border-emerald-400/60"
+                                    disabled={txBusy}
+                                  />
+                                </label>
+                              </div>
                             )}
                             <button
                               type="button"
-                              onClick={() => void handleReveal(item.postId, manualSecret)}
+                              onClick={() => void handleReveal(item.postId, manualSecret, manualRevealChoice)}
                               disabled={txBusy || (!storedReveal && !manualSecret.trim())}
                               className="inline-flex items-center justify-center rounded-xl border border-sky-400/35 bg-sky-500/10 px-4 py-2.5 text-sm font-semibold text-sky-100 transition hover:bg-sky-500/20 disabled:cursor-not-allowed disabled:opacity-60"
                             >

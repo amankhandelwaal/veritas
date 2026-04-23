@@ -39,7 +39,7 @@ contract Veritas is ReentrancyGuard {
     }
 
     uint256 public constant FLAG_THRESHOLD = 5;
-    uint256 public constant MODERATOR_DEPOSIT = 0.05 ether;
+    uint256 public constant MODERATOR_DEPOSIT = 0.01 ether;
     uint256 public constant COMMIT_DURATION = 1 days;
     uint256 public constant REVEAL_DURATION = 1 days;
     uint256 private constant MINIMUM_QUORUM = 3;
@@ -265,10 +265,10 @@ contract Veritas is ReentrancyGuard {
             return;
         }
 
-        bool approved = tribunalCase.totalApproveWeight > tribunalCase.totalBanWeight;
-        uint256 majorityWeight = approved
-            ? tribunalCase.totalApproveWeight
-            : tribunalCase.totalBanWeight;
+        uint256 totalApproveWeight = tribunalCase.totalApproveWeight;
+        uint256 totalBanWeight = tribunalCase.totalBanWeight;
+        bool approved = totalApproveWeight > totalBanWeight;
+        uint256 majorityWeight = approved ? totalApproveWeight : totalBanWeight;
         uint256 slashedPool;
         address primaryWinner;
 
@@ -318,8 +318,8 @@ contract Veritas is ReentrancyGuard {
         emit CaseFinalized(
             postId,
             approved,
-            tribunalCase.totalApproveWeight,
-            tribunalCase.totalBanWeight,
+            totalApproveWeight,
+            totalBanWeight,
             slashedPool
         );
         _payout(participants, payouts);

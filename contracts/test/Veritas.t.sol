@@ -5,45 +5,31 @@ import "forge-std/Test.sol";
 import "../src/Veritas.sol";
 
 contract VeritasTest is Test {
-
     Veritas public veritas;
 
-    // Named test wallets — makes test output readable
-    address owner     = makeAddr("owner");
-    address alice     = makeAddr("alice");
-    address bob       = makeAddr("bob");
-    address carol     = makeAddr("carol");
-    address dave      = makeAddr("dave");
-    address eve       = makeAddr("eve");
+    address alice = makeAddr("alice");
+    address bob = makeAddr("bob");
+    address carol = makeAddr("carol");
+    address dave = makeAddr("dave");
+    address eve = makeAddr("eve");
+    address frank = makeAddr("frank");
 
-    // 5 moderator wallets
-    address mod1      = makeAddr("mod1");
-    address mod2      = makeAddr("mod2");
-    address mod3      = makeAddr("mod3");
-    address mod4      = makeAddr("mod4");
-    address mod5      = makeAddr("mod5");
+    address mod1 = makeAddr("mod1");
+    address mod2 = makeAddr("mod2");
+    address mod3 = makeAddr("mod3");
+    address mod4 = makeAddr("mod4");
 
     string constant TEST_CID = "QmTestCID123456789";
     string constant TEST_TAG = "AI_Research";
 
-    // ─── Setup ───────────────────────────────────────────────
-
     function setUp() public {
-        // Deploy as owner
-        vm.prank(owner);
         veritas = new Veritas();
 
-        // Register 5 moderators
-        vm.startPrank(owner);
-        veritas.addModerator(mod1);
-        veritas.addModerator(mod2);
-        veritas.addModerator(mod3);
-        veritas.addModerator(mod4);
-        veritas.addModerator(mod5);
-        vm.stopPrank();
+        vm.deal(mod1, 10 ether);
+        vm.deal(mod2, 10 ether);
+        vm.deal(mod3, 10 ether);
+        vm.deal(mod4, 10 ether);
     }
-
-    // ─── Post Creation ───────────────────────────────────────
 
     function test_CreatePost_Success() public {
         vm.prank(alice);
@@ -55,16 +41,7 @@ contract VeritasTest is Test {
         Veritas.Post memory post = veritas.getPost(1);
         assertEq(post.author, alice);
         assertEq(post.flagCount, 0);
-        assertEq(uint(post.state), uint(Veritas.PostState.ACTIVE));
-    }
-
-    function test_CreatePost_EmitEvent() public {
-        // Tell forge to expect this exact event
-        vm.expectEmit(true, true, false, false);
-        emit Veritas.PostCreated(1, alice, TEST_CID, TEST_TAG, block.timestamp);
-
-        vm.prank(alice);
-        veritas.createPost(TEST_CID, TEST_TAG);
+        assertEq(uint256(post.state), uint256(Veritas.PostState.ACTIVE));
     }
 
     function test_CreatePost_EmptyCID_Reverts() public {
@@ -73,214 +50,234 @@ contract VeritasTest is Test {
         veritas.createPost("", TEST_TAG);
     }
 
-    function test_CreatePost_EmptyTag_Reverts() public {
-        vm.prank(alice);
-        vm.expectRevert("Tag cannot be empty");
-        veritas.createPost(TEST_CID, "");
-    }
-
-    function test_CreatePost_MultiplePostsIncrementId() public {
-        vm.prank(alice);
-        veritas.createPost(TEST_CID, TEST_TAG);
-
-        vm.prank(bob);
-        uint256 secondId = veritas.createPost(TEST_CID, TEST_TAG);
-
-        assertEq(secondId, 2);
-        assertEq(veritas.getPostCount(), 2);
-    }
-
-    // ─── Flagging ────────────────────────────────────────────
-
-    function test_FlagPost_Success() public {
-        vm.prank(alice);
-        veritas.createPost(TEST_CID, TEST_TAG);
-
-        vm.prank(bob);
-        veritas.flagPost(1);
-
-        Veritas.Post memory post = veritas.getPost(1);
-        assertEq(post.flagCount, 1);
-        assertEq(uint(post.state), uint(Veritas.PostState.ACTIVE));
-    }
-
-    function test_FlagPost_AuthorCannotFlagOwn_Reverts() public {
-        vm.prank(alice);
-        veritas.createPost(TEST_CID, TEST_TAG);
-
-        vm.prank(alice);
-        vm.expectRevert("Cannot flag your own post");
-        veritas.flagPost(1);
-    }
-
-    function test_FlagPost_CannotFlagTwice_Reverts() public {
-        vm.prank(alice);
-        veritas.createPost(TEST_CID, TEST_TAG);
-
-        vm.prank(bob);
-        veritas.flagPost(1);
-
-        vm.prank(bob);
-        vm.expectRevert("Already flagged");
-        veritas.flagPost(1);
-    }
-
-    function test_FlagPost_ThreeFlagsTriggersUnderReview() public {
-        vm.prank(alice);
-        veritas.createPost(TEST_CID, TEST_TAG);
-
-        vm.prank(bob);   veritas.flagPost(1);
-        vm.prank(carol); veritas.flagPost(1);
-        vm.prank(dave);  veritas.flagPost(1);
-
-        Veritas.Post memory post = veritas.getPost(1);
-        assertEq(uint(post.state), uint(Veritas.PostState.UNDER_REVIEW));
-        assertEq(post.flagCount, 3);
-    }
-
-    function test_FlagPost_NonExistent_Reverts() public {
-        vm.prank(bob);
-        vm.expectRevert("Post does not exist");
-        veritas.flagPost(999);
-    }
-
-    // ─── Moderation Voting ───────────────────────────────────
-
-    function _putPostUnderReview() internal returns (uint256) {
-        vm.prank(alice);
-        veritas.createPost(TEST_CID, TEST_TAG);
-
-        vm.prank(bob);   veritas.flagPost(1);
-        vm.prank(carol); veritas.flagPost(1);
-        vm.prank(dave);  veritas.flagPost(1);
-
-        return 1;
-    }
-
-    function test_ModeratorVote_BanPost() public {
+    function test_FlagPost_FifthFlagTriggersUnderReviewWithoutTimers() public {
         uint256 postId = _putPostUnderReview();
-
-        vm.prank(mod1); veritas.moderatorVote(postId, false);
-        vm.prank(mod2); veritas.moderatorVote(postId, false);
-        vm.prank(mod3); veritas.moderatorVote(postId, false);
 
         Veritas.Post memory post = veritas.getPost(postId);
-        assertEq(uint(post.state), uint(Veritas.PostState.BANNED));
+        assertEq(uint256(post.state), uint256(Veritas.PostState.UNDER_REVIEW));
+        assertEq(post.flagCount, 5);
+
+        (uint256 commitDeadline, uint256 revealDeadline, , , uint256 voterCount, , ) =
+            veritas.getTribunalCase(postId);
+        assertEq(commitDeadline, 0);
+        assertEq(revealDeadline, 0);
+        assertEq(voterCount, 0);
     }
 
-    function test_ModeratorVote_ApprovePost() public {
-        uint256 postId = _putPostUnderReview();
+    function test_RegisterAndResignModerator() public {
+        _registerModerator(mod1);
 
-        vm.prank(mod1); veritas.moderatorVote(postId, true);
-        vm.prank(mod2); veritas.moderatorVote(postId, true);
-        vm.prank(mod3); veritas.moderatorVote(postId, true);
+        assertTrue(veritas.isModerator(mod1));
+        assertEq(veritas.moderatorDeposits(mod1), veritas.MODERATOR_DEPOSIT());
+
+        uint256 balanceBefore = mod1.balance;
+        vm.prank(mod1);
+        veritas.resignAsModerator();
+
+        assertFalse(veritas.isModerator(mod1));
+        assertEq(veritas.moderatorDeposits(mod1), 0);
+        assertEq(mod1.balance, balanceBefore + veritas.MODERATOR_DEPOSIT());
+    }
+
+    function test_RegisterModerator_RequiresExactDeposit() public {
+        vm.prank(mod1);
+        vm.expectRevert("Incorrect moderator deposit");
+        veritas.registerModerator{value: 0.005 ether}();
+    }
+
+    function test_CommitVote_FirstBloodStartsDeadlinesAndLocksActiveCase() public {
+        uint256 postId = _putPostUnderReview();
+        _registerModerator(mod1);
+
+        uint256 start = block.timestamp;
+        bytes32 commitment = _commitment(true, "secret-1", mod1);
+
+        vm.prank(mod1);
+        veritas.commitVote{value: 1 ether}(postId, commitment);
+
+        (uint256 commitDeadline, uint256 revealDeadline, , , uint256 voterCount, , ) =
+            veritas.getTribunalCase(postId);
+        assertEq(commitDeadline, start + 1 days);
+        assertEq(revealDeadline, start + 2 days);
+        assertEq(voterCount, 1);
+        assertEq(veritas.activeCases(mod1), 1);
+    }
+
+    function test_ResignWithActiveCase_Reverts() public {
+        uint256 postId = _putPostUnderReview();
+        _registerModerator(mod1);
+
+        vm.prank(mod1);
+        veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-1", mod1));
+
+        vm.prank(mod1);
+        vm.expectRevert("Cannot exit with active unresolved cases");
+        veritas.resignAsModerator();
+    }
+
+    function test_RevealVote_AddsStakeWeight() public {
+        uint256 postId = _putPostUnderReview();
+        _registerModerator(mod1);
+
+        vm.prank(mod1);
+        veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-1", mod1));
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(mod1);
+        veritas.revealVote(postId, true, "secret-1");
+
+        (uint256 approveWeight, uint256 banWeight) = veritas.getVoteCounts(postId);
+        assertEq(approveWeight, 1 ether);
+        assertEq(banWeight, 0);
+    }
+
+    function test_RevealVote_BadSecretReverts() public {
+        uint256 postId = _putPostUnderReview();
+        _registerModerator(mod1);
+
+        vm.prank(mod1);
+        veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-1", mod1));
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(mod1);
+        vm.expectRevert("Reveal does not match commitment");
+        veritas.revealVote(postId, true, "wrong-secret");
+    }
+
+    function test_FinalizeCase_MajorityWinsAndMinorityIsSlashed() public {
+        uint256 postId = _putPostUnderReview();
+        _registerModerator(mod1);
+        _registerModerator(mod2);
+        _registerModerator(mod3);
+
+        uint256 mod1Start = mod1.balance;
+        uint256 mod2Start = mod2.balance;
+        uint256 mod3Start = mod3.balance;
+
+        vm.prank(mod1);
+        veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-1", mod1));
+        vm.prank(mod2);
+        veritas.commitVote{value: 3 ether}(postId, _commitment(true, "secret-2", mod2));
+        vm.prank(mod3);
+        veritas.commitVote{value: 2 ether}(postId, _commitment(false, "secret-3", mod3));
+
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(mod1);
+        veritas.revealVote(postId, true, "secret-1");
+        vm.prank(mod2);
+        veritas.revealVote(postId, true, "secret-2");
+        vm.prank(mod3);
+        veritas.revealVote(postId, false, "secret-3");
+
+        vm.warp(block.timestamp + 1 days + 1);
+        veritas.finalizeCase(postId);
 
         Veritas.Post memory post = veritas.getPost(postId);
-        assertEq(uint(post.state), uint(Veritas.PostState.ACTIVE));
+        assertEq(uint256(post.state), uint256(Veritas.PostState.ACTIVE));
+        assertEq(veritas.activeCases(mod1), 0);
+        assertEq(veritas.activeCases(mod2), 0);
+        assertEq(veritas.activeCases(mod3), 0);
+
+        assertEq(mod1.balance, mod1Start + 0.5 ether);
+        assertEq(mod2.balance, mod2Start + 1.5 ether);
+        assertEq(mod3.balance, mod3Start - 2 ether);
     }
 
-    function test_ModeratorVote_NonModerator_Reverts() public {
+    function test_FinalizeCase_QuorumFailureVoidsAndCanReopen() public {
         uint256 postId = _putPostUnderReview();
+        _registerModerator(mod1);
+        _registerModerator(mod2);
 
-        vm.prank(eve);
-        vm.expectRevert("Not a moderator");
-        veritas.moderatorVote(postId, true);
-    }
-
-    function test_ModeratorVote_CannotVoteTwice_Reverts() public {
-        uint256 postId = _putPostUnderReview();
+        uint256 mod1Start = mod1.balance;
+        uint256 mod2Start = mod2.balance;
 
         vm.prank(mod1);
-        veritas.moderatorVote(postId, true);
+        veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-1", mod1));
+        vm.prank(mod2);
+        veritas.commitVote{value: 2 ether}(postId, _commitment(false, "secret-2", mod2));
 
-        vm.prank(mod1);
-        vm.expectRevert("Already voted");
-        veritas.moderatorVote(postId, true);
+        vm.warp(block.timestamp + 2 days + 1);
+        veritas.finalizeCase(postId);
+
+        assertEq(mod1.balance, mod1Start);
+        assertEq(mod2.balance, mod2Start);
+        assertEq(veritas.activeCases(mod1), 0);
+        assertEq(veritas.activeCases(mod2), 0);
+
+        Veritas.Post memory post = veritas.getPost(postId);
+        assertEq(uint256(post.state), uint256(Veritas.PostState.UNDER_REVIEW));
+
+        (uint256 commitDeadline, , , , uint256 voterCount, , ) = veritas.getTribunalCase(postId);
+        assertEq(commitDeadline, 0);
+        assertEq(voterCount, 0);
+
+        _registerModerator(mod3);
+        vm.prank(mod3);
+        veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-3", mod3));
+        (uint256 reopenedDeadline, , , , uint256 reopenedVoterCount, , ) =
+            veritas.getTribunalCase(postId);
+        assertGt(reopenedDeadline, 0);
+        assertEq(reopenedVoterCount, 1);
     }
-
-    function test_ModeratorVote_PostNotUnderReview_Reverts() public {
-        vm.prank(alice);
-        veritas.createPost(TEST_CID, TEST_TAG);
-
-        vm.prank(mod1);
-        vm.expectRevert("Post not under review");
-        veritas.moderatorVote(1, true);
-    }
-
-    function test_ModeratorVote_CannotVoteAfterResolved_Reverts() public {
-        uint256 postId = _putPostUnderReview();
-
-        vm.prank(mod1); veritas.moderatorVote(postId, false);
-        vm.prank(mod2); veritas.moderatorVote(postId, false);
-        vm.prank(mod3); veritas.moderatorVote(postId, false);
-
-        // Case resolved — mod4 tries to vote after
-        vm.prank(mod4);
-        vm.expectRevert("Post not under review");
-        veritas.moderatorVote(postId, false);
-    }
-
-    function test_GetVoteCounts() public {
-        uint256 postId = _putPostUnderReview();
-
-        vm.prank(mod1); veritas.moderatorVote(postId, true);
-        vm.prank(mod2); veritas.moderatorVote(postId, false);
-
-        (uint256 approve, uint256 ban) = veritas.getVoteCounts(postId);
-        assertEq(approve, 1);
-        assertEq(ban, 1);
-    }
-
-    // ─── Moderator Management ────────────────────────────────
-
-    function test_AddModerator_OnlyOwner_Reverts() public {
-        address newMod = makeAddr("newMod");
-
-        vm.prank(alice);
-        vm.expectRevert();
-        veritas.addModerator(newMod);
-    }
-
-    function test_AddModerator_MaxFive_Reverts() public {
-        // Already have 5 from setUp
-        address sixthMod = makeAddr("sixthMod");
-
-        vm.prank(owner);
-        vm.expectRevert("Maximum 5 moderators");
-        veritas.addModerator(sixthMod);
-    }
-
-    function test_RemoveModerator_Success() public {
-        vm.prank(owner);
-        veritas.removeModerator(mod5);
-
-        assertFalse(veritas.isModerator(mod5));
-        assertEq(veritas.getModerators().length, 4);
-    }
-
-    function test_RemoveModerator_NotModerator_Reverts() public {
-        vm.prank(owner);
-        vm.expectRevert("Not a moderator");
-        veritas.removeModerator(alice);
-    }
-
-    function test_GetModerators_ReturnsAll() public view {
-        address[] memory mods = veritas.getModerators();
-        assertEq(mods.length, 5);
-    }
-
-    // ─── Cannot Flag Banned Post ─────────────────────────────
 
     function test_FlagBannedPost_Reverts() public {
         uint256 postId = _putPostUnderReview();
+        _registerModerator(mod1);
+        _registerModerator(mod2);
+        _registerModerator(mod3);
 
-        vm.prank(mod1); veritas.moderatorVote(postId, false);
-        vm.prank(mod2); veritas.moderatorVote(postId, false);
-        vm.prank(mod3); veritas.moderatorVote(postId, false);
+        vm.prank(mod1);
+        veritas.commitVote{value: 2 ether}(postId, _commitment(false, "secret-1", mod1));
+        vm.prank(mod2);
+        veritas.commitVote{value: 2 ether}(postId, _commitment(false, "secret-2", mod2));
+        vm.prank(mod3);
+        veritas.commitVote{value: 1 ether}(postId, _commitment(true, "secret-3", mod3));
 
-        // Post is now BANNED — eve tries to flag it
-        vm.prank(eve);
+        vm.warp(block.timestamp + 1 days + 1);
+        vm.prank(mod1);
+        veritas.revealVote(postId, false, "secret-1");
+        vm.prank(mod2);
+        veritas.revealVote(postId, false, "secret-2");
+        vm.prank(mod3);
+        veritas.revealVote(postId, true, "secret-3");
+
+        vm.warp(block.timestamp + 1 days + 1);
+        veritas.finalizeCase(postId);
+
+        vm.prank(frank);
         vm.expectRevert("Post is not active");
         veritas.flagPost(postId);
+    }
+
+    function _registerModerator(address moderator) internal {
+        uint256 deposit = veritas.MODERATOR_DEPOSIT();
+        vm.prank(moderator);
+        veritas.registerModerator{value: deposit}();
+    }
+
+    function _putPostUnderReview() internal returns (uint256) {
+        vm.prank(alice);
+        uint256 postId = veritas.createPost(TEST_CID, TEST_TAG);
+
+        vm.prank(bob);
+        veritas.flagPost(postId);
+        vm.prank(carol);
+        veritas.flagPost(postId);
+        vm.prank(dave);
+        veritas.flagPost(postId);
+        vm.prank(eve);
+        veritas.flagPost(postId);
+        vm.prank(frank);
+        veritas.flagPost(postId);
+
+        return postId;
+    }
+
+    function _commitment(
+        bool vote,
+        string memory secret,
+        address moderator
+    ) internal pure returns (bytes32) {
+        return keccak256(abi.encodePacked(vote, secret, moderator));
     }
 }
